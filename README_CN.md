@@ -16,7 +16,7 @@
 ## 安装
 
 ```bash
-git clone https://github.com/yourusername/PyForce.git
+git clone https://github.com/Elycyx/PyForce.git
 cd PyForce
 pip install -e .
 ```
