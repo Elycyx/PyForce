@@ -1,4 +1,6 @@
 # PyForce
+![Windows](https://img.shields.io/badge/OS-Windows-0078D6?logo=windows&logoColor=white)
+![Ubuntu](https://img.shields.io/badge/OS-Ubuntu-E95420?logo=ubuntu&logoColor=white)
 
 A modular Python package for collecting, visualizing, and saving force sensor data. This package is designed to be used with the Sunrise (宇立) force sensors.
 
