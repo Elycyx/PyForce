@@ -2,9 +2,12 @@ import numpy as np
 import struct
 import socket
 import matplotlib.pyplot as plt
+from matplotlib.animation import FuncAnimation
 from datetime import datetime
 import os
 from typing import Optional, Tuple, List, Dict
+from collections import deque
+import threading
 
 
 class ForceSensor:
@@ -315,6 +318,122 @@ class ForceSensor:
         
         except KeyboardInterrupt:
             print("\nData collection stopped")
+        
+        # Stop data stream
+        self.stop_stream()
+        
+        return len(self.timestamps) > 0
+    
+    def collect_data_with_realtime_plot(self, duration: Optional[float] = None, 
+                                        window_size: int = 100, 
+                                        update_interval: int = 50) -> bool:
+        """
+        Collect data with real-time visualization
+        
+        Args:
+            duration: Collection duration (seconds), None for manual stop (Ctrl+C)
+            window_size: Number of recent data points to display in the plot
+            update_interval: Plot update interval in milliseconds
+            
+        Returns:
+            bool: Collection success status
+        """
+        if not self.connected:
+            print("Not connected to sensor")
+            return False
+        
+        # Start data stream
+        if not self.start_stream():
+            return False
+        
+        print("Collecting data with real-time visualization...")
+        print("Press Ctrl+C to stop")
+        
+        # Enable interactive mode
+        plt.ion()
+        
+        # Create figure and subplots
+        fig, axes = plt.subplots(3, 2, figsize=(12, 10))
+        fig.suptitle('Real-time Force Sensor Data', fontsize=14, fontweight='bold')
+        
+        # Initialize line objects
+        lines = []
+        titles = ['Fx - Force X', 'Fy - Force Y', 'Fz - Force Z', 
+                  'Mx - Torque X', 'My - Torque Y', 'Mz - Torque Z']
+        colors = ['r', 'g', 'b', 'c', 'm', 'y']
+        
+        for i, (ax, title, color) in enumerate(zip(axes.flat, titles, colors)):
+            line, = ax.plot([], [], color + '-', linewidth=1.5)
+            ax.set_xlabel('Time (s)')
+            ax.set_ylabel('Force (N)' if i < 3 else 'Torque (Nm)')
+            ax.set_title(title)
+            ax.grid(True, alpha=0.3)
+            lines.append(line)
+        
+        plt.tight_layout()
+        
+        # Data deques for efficient rolling window
+        time_deque = deque(maxlen=window_size)
+        data_deques = [deque(maxlen=window_size) for _ in range(6)]
+        
+        try:
+            while True:
+                # Check if duration reached
+                if duration and self.start_time:
+                    elapsed = (datetime.now() - self.start_time).total_seconds()
+                    if elapsed >= duration:
+                        print(f"\nReached specified duration of {duration} seconds")
+                        break
+                
+                # Receive data
+                data = self.socket.recv(1000)
+                result = self.parse_data(data)
+                
+                if result:
+                    fx, fy, fz, mx, my, mz = result
+                    
+                    # Record timestamp
+                    current_time = (datetime.now() - self.start_time).total_seconds()
+                    self.timestamps.append(current_time)
+                    
+                    # Save data
+                    self.data_fx.append(fx)
+                    self.data_fy.append(fy)
+                    self.data_fz.append(fz)
+                    self.data_mx.append(mx)
+                    self.data_my.append(my)
+                    self.data_mz.append(mz)
+                    
+                    # Update deques for plotting
+                    time_deque.append(current_time)
+                    data_deques[0].append(fx)
+                    data_deques[1].append(fy)
+                    data_deques[2].append(fz)
+                    data_deques[3].append(mx)
+                    data_deques[4].append(my)
+                    data_deques[5].append(mz)
+                    
+                    # Update plots
+                    if len(time_deque) > 1:
+                        times = list(time_deque)
+                        for i, (line, ax, data_deque) in enumerate(zip(lines, axes.flat, data_deques)):
+                            values = list(data_deque)
+                            line.set_data(times, values)
+                            
+                            # Auto-scale axes
+                            ax.relim()
+                            ax.autoscale_view()
+                        
+                        # Redraw
+                        fig.canvas.draw()
+                        fig.canvas.flush_events()
+                        plt.pause(0.001)
+        
+        except KeyboardInterrupt:
+            print("\nData collection stopped")
+        
+        finally:
+            plt.ioff()
         
         # Stop data stream
         self.stop_stream()

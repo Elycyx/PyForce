@@ -1,6 +1,7 @@
 # PyForce
 ![Windows](https://img.shields.io/badge/OS-Windows-0078D6?logo=windows&logoColor=white)
 ![Ubuntu](https://img.shields.io/badge/OS-Ubuntu-E95420?logo=ubuntu&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.X-3776AB?logo=python&logoColor=white)
 
 A modular Python package for collecting, visualizing, and saving force sensor data. This package is designed to be used with the Sunrise (宇立) force sensors.
 
@@ -65,6 +66,28 @@ if sensor.connect():
 # Collect data for a specific duration (e.g., 10 seconds)
 sensor.collect_data(duration=10, print_data=True)
 ```
+
+### Real-time Visualization
+
+**NEW!** Collect and visualize data in real-time:
+
+```python
+# Collect data with live plotting
+sensor.collect_data_with_realtime_plot(
+    duration=30,          # Optional: collection duration in seconds
+    window_size=100       # Number of recent data points to display
+)
+
+# After collection, save and generate final charts
+sensor.save_data()
+sensor.plot_data()
+```
+
+Features:
+- **Live updates**: Watch force/torque values change in real-time
+- **Rolling window**: Display most recent N data points
+- **6-channel view**: See all force and torque components simultaneously
+- **Auto-scaling**: Axes automatically adjust to data range
 
 ### Configure Sensor Settings
 
@@ -138,6 +161,9 @@ ForceSensor(ip_addr='192.168.0.108', port=4008)
 - `collect_data(duration=None, print_data=True)` → bool: Collect sensor data
   - `duration`: Collection duration in seconds (None for manual stop)
   - `print_data`: Whether to print real-time data
+- `collect_data_with_realtime_plot(duration=None, window_size=100)` → bool: Collect with live visualization
+  - `duration`: Collection duration in seconds (None for manual stop)
+  - `window_size`: Number of recent data points to display
 - `start_stream()` → bool: Start data stream
 - `stop_stream()` → bool: Stop data stream
 - `clear_data()`: Clear data buffer
@@ -176,8 +202,9 @@ Time(s)    Fx(N)    Fy(N)    Fz(N)    Mx(Nm)    My(Nm)    Mz(Nm)
 
 ## Examples
 
-See `examples/example_usage.py` for detailed examples:
+See `examples/` directory for detailed examples:
 
+**Basic Examples** (`examples/example_usage.py`):
 1. **Basic Usage**: Simple data collection and visualization
 2. **Timed Collection**: Collect data for specific duration
 3. **Custom Settings**: Configure sensor parameters
@@ -186,10 +213,21 @@ See `examples/example_usage.py` for detailed examples:
 6. **Data Access**: Access and analyze collected data
 7. **Callback Integration**: Use callbacks for data processing
 
+**Real-time Visualization** (`examples/realtime_visualization.py`):
+1. **Basic Real-time**: Simple real-time visualization
+2. **Timed Real-time**: Real-time with specified duration
+3. **Large Window**: Show more data history
+4. **Multiple Sessions**: Multiple real-time collections
+5. **Comparison**: Normal vs real-time collection
+
 Run examples:
 
 ```bash
+# Basic examples
 python examples/example_usage.py
+
+# Real-time visualization examples
+python examples/realtime_visualization.py
 ```
 
 ## Troubleshooting

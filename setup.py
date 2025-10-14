@@ -22,7 +22,7 @@ setup(
     description='A Python package for force sensor data collection and visualization',
     long_description=long_description,
     long_description_content_type='text/markdown',
-    url='https://github.com/yourusername/PyForce',
+    url='https://github.com/Elycyx/PyForce',
     packages=find_packages(),
     classifiers=[
         'Development Status :: 3 - Alpha',
@@ -44,8 +44,8 @@ setup(
     include_package_data=True,
     zip_safe=False,
     project_urls={
-        'Bug Reports': 'https://github.com/yourusername/PyForce/issues',
-        'Source': 'https://github.com/yourusername/PyForce',
+        'Bug Reports': 'https://github.com/Elycyx/PyForce/issues',
+        'Source': 'https://github.com/Elycyx/PyForce',
     },
 )
 

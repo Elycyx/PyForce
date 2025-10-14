@@ -1,6 +1,7 @@
 # PyForce
 ![Windows](https://img.shields.io/badge/OS-Windows-0078D6?logo=windows&logoColor=white)
 ![Ubuntu](https://img.shields.io/badge/OS-Ubuntu-E95420?logo=ubuntu&logoColor=white)
+![Python](https://img.shields.io/badge/Python-3.X-3776AB?logo=python&logoColor=white)
 
 一个用于力传感器数据采集、可视化和保存的模块化Python包。本包设计用于使用宇立力传感器。
 
@@ -65,6 +66,28 @@ if sensor.connect():
 # 采集指定时长的数据（例如10秒）
 sensor.collect_data(duration=10, print_data=True)
 ```
+
+### 实时可视化
+
+**新功能！** 边采集边实时可视化数据：
+
+```python
+# 采集数据并实时绘图
+sensor.collect_data_with_realtime_plot(
+    duration=30,          # 可选：采集时长（秒）
+    window_size=100       # 显示最近的数据点数量
+)
+
+# 采集完成后，保存数据并生成最终图表
+sensor.save_data()
+sensor.plot_data()
+```
+
+功能特点：
+- **实时更新**：实时观察力/力矩值的变化
+- **滚动窗口**：显示最近的N个数据点
+- **6通道显示**：同时查看所有力和力矩分量
+- **自动缩放**：坐标轴自动适应数据范围
 
 ### 配置传感器设置
 
@@ -138,6 +161,9 @@ ForceSensor(ip_addr='192.168.0.108', port=4008)
 - `collect_data(duration=None, print_data=True)` → bool: 采集传感器数据
   - `duration`: 采集时长（秒），None表示手动停止
   - `print_data`: 是否打印实时数据
+- `collect_data_with_realtime_plot(duration=None, window_size=100)` → bool: 采集数据并实时可视化
+  - `duration`: 采集时长（秒），None表示手动停止
+  - `window_size`: 显示最近的数据点数量
 - `start_stream()` → bool: 开始数据流
 - `stop_stream()` → bool: 停止数据流
 - `clear_data()`: 清空数据缓冲区
@@ -176,8 +202,9 @@ Time(s)    Fx(N)    Fy(N)    Fz(N)    Mx(Nm)    My(Nm)    Mz(Nm)
 
 ## 示例
 
-查看 `examples/example_usage.py` 获取详细示例：
+查看 `examples/` 目录获取详细示例：
 
+**基本示例** (`examples/example_usage.py`):
 1. **基本用法**：简单的数据采集和可视化
 2. **定时采集**：采集指定时长的数据
 3. **自定义设置**：配置传感器参数
@@ -186,10 +213,21 @@ Time(s)    Fx(N)    Fy(N)    Fz(N)    Mx(Nm)    My(Nm)    Mz(Nm)
 6. **数据访问**：访问和分析采集的数据
 7. **回调集成**：使用回调处理数据
 
+**实时可视化** (`examples/realtime_visualization.py`):
+1. **基本实时**：简单的实时可视化
+2. **定时实时**：指定时长的实时采集
+3. **大窗口**：显示更多数据历史
+4. **多次会话**：多次实时采集
+5. **对比**：普通采集 vs 实时采集
+
 运行示例：
 
 ```bash
+# 基本示例
 python examples/example_usage.py
+
+# 实时可视化示例
+python examples/realtime_visualization.py
 ```
 
 ## 故障排除
