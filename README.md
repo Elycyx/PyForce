@@ -34,7 +34,64 @@ from pyforce import ForceSensor
 
 ## Quick Start
 
-### Basic Usage
+### Simple Interface (Recommended for Integration)
+
+For integrating the force sensor into other projects, use these simple methods:
+
+```python
+from pyforce import ForceSensor
+import time
+
+# Create sensor instance
+sensor = ForceSensor(ip_addr='192.168.0.108', port=4008)
+
+# 1. Connect to sensor
+if not sensor.connect():
+    print("Connection failed")
+    exit(1)
+
+try:
+    # 2. Start data stream (required before reading)
+    sensor.start_stream()
+    time.sleep(0.5)  # Wait for stream to stabilize
+    
+    # 3. Zero calibration
+    if sensor.zero(num_samples=50):
+        print(f"Sensor zeroed, bias: {sensor.bias}")
+    
+    # 4. Read data in loop
+    for i in range(100):
+        force_data = sensor.read()  # Returns np.ndarray [fx, fy, fz, mx, my, mz]
+        if force_data is not None:
+            print(f"Force: Fx={force_data[0]:.3f}, Fy={force_data[1]:.3f}, Fz={force_data[2]:.3f}")
+            print(f"Torque: Mx={force_data[3]:.3f}, My={force_data[4]:.3f}, Mz={force_data[5]:.3f}")
+        time.sleep(0.01)
+    
+    # 5. Stop data stream
+    sensor.stop_stream()
+    
+finally:
+    # 6. Disconnect
+    sensor.disconnect()
+```
+
+**Key Methods:**
+- `connect()` → bool: Connect to sensor
+- `disconnect()` → bool: Disconnect from sensor
+- `is_connected()` → bool: Check connection status
+- `read()` → Optional[np.ndarray]: Read most recent 6-axis force/torque data (non-blocking)
+- `get()` → Optional[Dict]: Get most recent data with timestamp (ATI-compatible interface)
+- `zero(num_samples=100)` → bool: Zero calibration by averaging samples
+- `start_stream()` → bool: Start data streaming with background thread (required before read)
+- `stop_stream()` → bool: Stop data streaming and background thread
+
+**Time-Aligned Real-Time Data**: 
+- The sensor uses a **background thread** that continuously receives data from the sensor
+- `read()` and `get()` return the **most recent cached data** without blocking
+- This ensures **true real-time performance** with guaranteed time alignment
+- No buffer flushing needed - you always get the freshest data
+
+### Advanced Usage with Batch Collection
 
 ```python
 from pyforce import ForceSensor
@@ -148,7 +205,17 @@ ForceSensor(ip_addr='192.168.0.108', port=4008)
 
 **Connection Management**
 - `connect()` → bool: Connect to sensor
-- `disconnect()`: Disconnect from sensor
+- `disconnect()` → bool: Disconnect from sensor
+- `is_connected()` → bool: Check if sensor is connected
+
+**Data Reading & Calibration**
+- `read()` → Optional[np.ndarray]: Read most recent 6-axis force/torque data [fx, fy, fz, mx, my, mz] (non-blocking)
+  - Returns cached data from background streaming thread for real-time performance
+- `get()` → Optional[Dict]: Get most recent data with timestamp
+  - Returns: `{'ft': np.ndarray, 'timestamp': float}`
+  - ATI-compatible interface
+- `zero(num_samples=100)` → bool: Zero/bias calibration by averaging samples
+  - `num_samples`: Number of samples to average for bias calculation
 
 **Sensor Configuration**
 - `query_info()` → Dict: Query sensor information

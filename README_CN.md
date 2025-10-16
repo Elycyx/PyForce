@@ -34,7 +34,64 @@ from pyforce import ForceSensor
 
 ## 快速开始
 
-### 基本用法
+### 简单接口（推荐用于集成）
+
+将力传感器集成到其他项目时，使用以下简单方法：
+
+```python
+from pyforce import ForceSensor
+import time
+
+# 创建传感器实例
+sensor = ForceSensor(ip_addr='192.168.0.108', port=4008)
+
+# 1. 连接传感器
+if not sensor.connect():
+    print("连接失败")
+    exit(1)
+
+try:
+    # 2. 启动数据流（读取数据前必需）
+    sensor.start_stream()
+    time.sleep(0.5)  # 等待数据流稳定
+    
+    # 3. 零点标定
+    if sensor.zero(num_samples=50):
+        print(f"传感器已标定，偏移量: {sensor.bias}")
+    
+    # 4. 循环读取数据
+    for i in range(100):
+        force_data = sensor.read()  # 返回 np.ndarray [fx, fy, fz, mx, my, mz]
+        if force_data is not None:
+            print(f"力: Fx={force_data[0]:.3f}, Fy={force_data[1]:.3f}, Fz={force_data[2]:.3f}")
+            print(f"力矩: Mx={force_data[3]:.3f}, My={force_data[4]:.3f}, Mz={force_data[5]:.3f}")
+        time.sleep(0.01)
+    
+    # 5. 停止数据流
+    sensor.stop_stream()
+    
+finally:
+    # 6. 断开连接
+    sensor.disconnect()
+```
+
+**关键方法：**
+- `connect()` → bool: 连接传感器
+- `disconnect()` → bool: 断开传感器连接
+- `is_connected()` → bool: 检查连接状态
+- `read()` → Optional[np.ndarray]: 读取最新的6轴力/力矩数据（非阻塞）
+- `get()` → Optional[Dict]: 获取带时间戳的最新数据（ATI兼容接口）
+- `zero(num_samples=100)` → bool: 通过平均采样进行零点标定
+- `start_stream()` → bool: 启动数据流和后台线程（调用read前必需）
+- `stop_stream()` → bool: 停止数据流和后台线程
+
+**实时时间对齐数据：**
+- 传感器使用**后台线程**持续从传感器接收数据
+- `read()` 和 `get()` 返回**最新的缓存数据**，不会阻塞
+- 这确保了**真正的实时性能**和时间对齐保证
+- 无需缓冲区刷新 - 您始终获得最新的数据
+
+### 高级用法（批量采集）
 
 ```python
 from pyforce import ForceSensor
@@ -148,7 +205,17 @@ ForceSensor(ip_addr='192.168.0.108', port=4008)
 
 **连接管理**
 - `connect()` → bool: 连接到传感器
-- `disconnect()`: 断开传感器连接
+- `disconnect()` → bool: 断开传感器连接
+- `is_connected()` → bool: 检查传感器是否已连接
+
+**数据读取与标定**
+- `read()` → Optional[np.ndarray]: 读取最新的6轴力/力矩数据 [fx, fy, fz, mx, my, mz]（非阻塞）
+  - 从后台流线程返回缓存数据，实现实时性能
+- `get()` → Optional[Dict]: 获取带时间戳的最新数据
+  - 返回: `{'ft': np.ndarray, 'timestamp': float}`
+  - ATI兼容接口
+- `zero(num_samples=100)` → bool: 通过平均采样进行零点/偏置标定
+  - `num_samples`: 用于计算偏置的采样数量
 
 **传感器配置**
 - `query_info()` → Dict: 查询传感器信息

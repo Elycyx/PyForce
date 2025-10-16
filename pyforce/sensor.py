@@ -8,6 +8,8 @@ import os
 from typing import Optional, Tuple, List, Dict
 from collections import deque
 import threading
+import logging
+import time
 
 
 class ForceSensor:
@@ -35,6 +37,25 @@ class ForceSensor:
         self.socket = None
         self.connected = False
         
+        # Logger setup
+        self.logger = logging.getLogger(self.__class__.__name__)
+        if not self.logger.handlers:
+            handler = logging.StreamHandler()
+            formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+            handler.setFormatter(formatter)
+            self.logger.addHandler(handler)
+            self.logger.setLevel(logging.INFO)
+        
+        # Bias for zero calibration
+        self.bias = np.zeros(6, dtype=np.float32)
+        
+        # Streaming state
+        self._streaming_active = threading.Event()
+        self._streaming_thread = None
+        self._streaming_lock = threading.Lock()
+        self._latest_data = None
+        self._latest_timestamp = None
+        
         # Data storage
         self.data_fx = []
         self.data_fy = []
@@ -56,22 +77,36 @@ class ForceSensor:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
             self.socket.connect((self.ip_addr, self.port))
             self.connected = True
-            print(f"Successfully connected to sensor: {self.ip_addr}:{self.port}")
+            self.logger.info(f"Successfully connected to sensor: {self.ip_addr}:{self.port}")
             return True
         except Exception as e:
-            print(f"Connection failed: {e}")
+            self.logger.error(f"Connection failed: {e}")
             self.connected = False
             return False
     
-    def disconnect(self):
-        """Disconnect from sensor"""
-        if self.socket:
-            try:
+    def disconnect(self) -> bool:
+        """
+        Disconnect from sensor
+        
+        Returns:
+            bool: True if disconnection successful
+        """
+        try:
+            # Stop streaming if active
+            if self._streaming_active.is_set():
+                self.stop_stream()
+            
+            if self.socket:
                 self.socket.close()
-                self.connected = False
-                print("Disconnected")
-            except Exception as e:
-                print(f"Error during disconnect: {e}")
+                self.socket = None
+            
+            self.connected = False
+            self.logger.info("Disconnected from force sensor")
+            return True
+            
+        except Exception as e:
+            self.logger.error(f"Error during disconnect: {e}")
+            return False
     
     def send_command(self, command: str, recv_size: int = 1000) -> Optional[bytearray]:
         """
@@ -215,6 +250,128 @@ class ForceSensor:
             print(f"Data parsing failed: {e}")
             return None
     
+    def is_connected(self) -> bool:
+        """
+        Check if sensor is connected
+        
+        Returns:
+            bool: True if connected
+        """
+        return self.connected
+    
+    def read(self) -> Optional[np.ndarray]:
+        """
+        Read the most recent force/torque data from sensor
+        
+        Note: This method returns cached data from the streaming thread,
+              ensuring real-time time-aligned measurements without blocking.
+              You must call start_stream() before using this method.
+        
+        Returns:
+            np.ndarray: 6-axis force/torque [fx, fy, fz, mx, my, mz] or None if read failed
+        """
+        if not self.is_connected():
+            self.logger.warning("Force sensor not connected")
+            return None
+        
+        if not self._streaming_active.is_set():
+            self.logger.warning("Data stream not started. Call start_stream() first.")
+            return None
+        
+        try:
+            # Get the latest data from streaming cache (thread-safe)
+            with self._streaming_lock:
+                if self._latest_data is None:
+                    return None
+                force_data = self._latest_data.copy()
+            
+            return force_data
+            
+        except Exception as e:
+            self.logger.error(f"Error reading from force sensor: {e}")
+            return None
+    
+    def get(self) -> Optional[Dict[str, any]]:
+        """
+        Get the most recent force/torque data with timestamp
+        
+        Similar to read() but returns a dictionary with both force data and timestamp.
+        This is compatible with the ATI sensor interface.
+        
+        Returns:
+            Dict with 'ft' (np.ndarray) and 'timestamp' (float), or None if read failed
+        """
+        if not self.is_connected():
+            self.logger.warning("Force sensor not connected")
+            return None
+        
+        if not self._streaming_active.is_set():
+            self.logger.warning("Data stream not started. Call start_stream() first.")
+            return None
+        
+        try:
+            # Get the latest data and timestamp from streaming cache (thread-safe)
+            with self._streaming_lock:
+                if self._latest_data is None:
+                    return None
+                force_data = self._latest_data.copy()
+                timestamp = self._latest_timestamp
+            
+            return {
+                'ft': force_data,
+                'timestamp': timestamp
+            }
+            
+        except Exception as e:
+            self.logger.error(f"Error reading from force sensor: {e}")
+            return None
+    
+    def zero(self, num_samples: int = 100) -> bool:
+        """
+        Zero/bias the force sensor by averaging multiple samples
+        
+        Args:
+            num_samples: Number of samples to average for bias calculation
+            
+        Returns:
+            bool: True if zeroing successful
+        """
+        if not self.is_connected():
+            self.logger.warning("Force sensor not connected")
+            return False
+        
+        try:
+            # Temporarily save current bias
+            old_bias = self.bias.copy()
+            # Reset bias to zero for raw readings
+            self.bias = np.zeros(6, dtype=np.float32)
+            
+            # Collect samples
+            samples = []
+            for i in range(num_samples):
+                force = self.read()
+                if force is not None:
+                    samples.append(force)
+                else:
+                    self.logger.warning(f"Failed to read sample {i+1}/{num_samples}")
+                time.sleep(0.01)  # Small delay between samples
+            
+            if len(samples) > 0:
+                self.bias = np.mean(samples, axis=0)
+                self.logger.info(f"Force sensor zeroed with {len(samples)} samples, bias: {self.bias}")
+                return True
+            else:
+                self.logger.error("Failed to collect samples for zeroing")
+                # Restore old bias
+                self.bias = old_bias
+                return False
+                
+        except Exception as e:
+            self.logger.error(f"Failed to zero force sensor: {e}")
+            # Restore old bias
+            self.bias = old_bias
+            return False
+    
     def clear_data(self):
         """Clear data buffer"""
         self.data_fx = []
@@ -228,35 +385,101 @@ class ForceSensor:
     
     def start_stream(self) -> bool:
         """
-        Start data stream
+        Start data stream with background thread for continuous data reception
+        
+        This starts a background thread that continuously receives data from the sensor,
+        ensuring that read() always returns the most recent data.
         
         Returns:
             bool: Success status
         """
-        result = self.send_command("AT+GSD\r\n")
-        if result is not None:
-            self.start_time = datetime.now()
-            print("Data stream started")
+        if self._streaming_active.is_set():
+            self.logger.warning("Data stream already started")
             return True
-        return False
+        
+        # Send command to start streaming
+        result = self.send_command("AT+GSD\r\n")
+        if result is None:
+            self.logger.error("Failed to start data stream")
+            return False
+        
+        self.start_time = datetime.now()
+        self._streaming_active.set()
+        
+        # Start background thread for continuous data reception
+        self._streaming_thread = threading.Thread(
+            target=self._streaming_worker,
+            daemon=True,
+            name="ForceSensorStreaming"
+        )
+        self._streaming_thread.start()
+        
+        self.logger.info("Data stream started with background thread")
+        return True
+    
+    def _streaming_worker(self):
+        """
+        Background worker thread that continuously receives data from sensor
+        
+        This ensures that read() always gets the most recent data without blocking.
+        """
+        self.logger.debug("Streaming worker thread started")
+        
+        while self._streaming_active.is_set():
+            try:
+                # Receive data packet
+                data = self.socket.recv(1000)
+                result = self.parse_data(data)
+                
+                if result is not None:
+                    fx, fy, fz, mx, my, mz = result
+                    # Create numpy array and apply bias correction
+                    force = np.array([fx, fy, fz, mx, my, mz], dtype=np.float32) - self.bias
+                    timestamp = time.time()
+                    
+                    # Update latest data (thread-safe)
+                    with self._streaming_lock:
+                        self._latest_data = force
+                        self._latest_timestamp = timestamp
+                
+            except socket.timeout:
+                continue
+            except Exception as e:
+                if self._streaming_active.is_set():
+                    self.logger.error(f"Error in streaming worker: {e}")
+                break
+        
+        self.logger.debug("Streaming worker thread stopped")
     
     def stop_stream(self) -> bool:
         """
-        Stop data stream
+        Stop data stream and background thread
         
         Returns:
             bool: Success status
         """
+        if not self._streaming_active.is_set():
+            self.logger.warning("Data stream not started")
+            return True
+        
+        # Signal thread to stop
+        self._streaming_active.clear()
+        
+        # Wait for thread to finish
+        if self._streaming_thread and self._streaming_thread.is_alive():
+            self._streaming_thread.join(timeout=2.0)
+        
+        # Send stop command to sensor
         try:
             self.socket.settimeout(2.0)
             result = self.send_command("AT+GSD=STOP\r\n")
             if result:
-                print("Data stream stopped:", str(result))
+                self.logger.info("Data stream stopped")
                 return True
         except socket.timeout:
-            print("Stop command timeout")
+            self.logger.warning("Stop command timeout")
         except Exception as e:
-            print(f"Error stopping data stream: {e}")
+            self.logger.error(f"Error stopping data stream: {e}")
         finally:
             if self.socket:
                 self.socket.settimeout(None)
