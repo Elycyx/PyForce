@@ -58,6 +58,11 @@ class ForceSensor:
         self._latest_data = None
         self._latest_timestamp = None
         
+        # Streaming statistics
+        self._packets_received = 0
+        self._packets_parsed = 0
+        self._parse_errors = 0
+        
         # Data storage
         self.data_fx = []
         self.data_fy = []
@@ -333,6 +338,24 @@ class ForceSensor:
             self.logger.error(f"Error reading from force sensor: {e}")
             return None
     
+    def get_stream_stats(self) -> Dict[str, any]:
+        """
+        Get streaming statistics for debugging
+        
+        Returns:
+            Dict with streaming statistics
+        """
+        return {
+            'streaming_active': self._streaming_active.is_set(),
+            'thread_alive': self._streaming_thread.is_alive() if self._streaming_thread else False,
+            'packets_received': self._packets_received,
+            'packets_parsed': self._packets_parsed,
+            'parse_errors': self._parse_errors,
+            'success_rate': self._packets_parsed / max(1, self._packets_received),
+            'has_data': self._latest_data is not None,
+            'last_timestamp': self._latest_timestamp
+        }
+    
     def zero(self, num_samples: int = 100) -> bool:
         """
         Zero/bias the force sensor by averaging multiple samples
@@ -430,7 +453,7 @@ class ForceSensor:
         
         This ensures that read() always gets the most recent data without blocking.
         """
-        self.logger.debug("Streaming worker thread started")
+        self.logger.info("Streaming worker thread started")
         
         # Set socket timeout to avoid blocking forever
         if self.socket:
@@ -443,6 +466,9 @@ class ForceSensor:
             try:
                 # Receive data packet
                 data = self.socket.recv(1024)
+                
+                # Update receive counter
+                self._packets_received += 1
                 
                 # Check if we received any data
                 if not data:
@@ -457,6 +483,8 @@ class ForceSensor:
                 
                 if result is not None:
                     consecutive_errors = 0  # Reset error counter on success
+                    self._packets_parsed += 1
+                    
                     fx, fy, fz, mx, my, mz = result
                     # Create numpy array and apply bias correction
                     force = np.array([fx, fy, fz, mx, my, mz], dtype=np.float32) - self.bias
@@ -466,9 +494,15 @@ class ForceSensor:
                     with self._streaming_lock:
                         self._latest_data = force
                         self._latest_timestamp = timestamp
+                    
+                    # Log every 100 packets for debugging
+                    if self._packets_parsed % 100 == 0:
+                        self.logger.debug(f"Received {self._packets_parsed} valid packets, {self._parse_errors} parse errors")
                 else:
                     # Parse failed, but don't count as critical error
-                    pass
+                    self._parse_errors += 1
+                    if self._parse_errors % 50 == 0:
+                        self.logger.warning(f"Parse errors: {self._parse_errors}/{self._packets_received} packets")
                 
             except socket.timeout:
                 # Timeout is normal, just continue
@@ -481,7 +515,7 @@ class ForceSensor:
                         self.logger.error("Too many consecutive errors, stopping stream")
                         break
         
-        self.logger.debug("Streaming worker thread stopped")
+        self.logger.info(f"Streaming worker thread stopped. Stats: {self._packets_parsed} parsed, {self._parse_errors} errors")
     
     def stop_stream(self) -> bool:
         """
