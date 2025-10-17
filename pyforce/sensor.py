@@ -37,14 +37,16 @@ class ForceSensor:
         self.socket = None
         self.connected = False
         
-        # Logger setup
-        self.logger = logging.getLogger(self.__class__.__name__)
+        # Logger setup - use unique logger name to avoid conflicts
+        logger_name = f"{self.__class__.__name__}_{id(self)}"
+        self.logger = logging.getLogger(logger_name)
         if not self.logger.handlers:
             handler = logging.StreamHandler()
             formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
             handler.setFormatter(formatter)
             self.logger.addHandler(handler)
             self.logger.setLevel(logging.INFO)
+            self.logger.propagate = False  # Prevent propagation to root logger
         
         # Bias for zero calibration
         self.bias = np.zeros(6, dtype=np.float32)
@@ -239,6 +241,11 @@ class ForceSensor:
             (fx, fy, fz, mx, my, mz) or None
         """
         try:
+            # Check if data is long enough
+            if len(data) < 30:
+                self.logger.debug(f"Data packet too short: {len(data)} bytes, expected at least 30 bytes")
+                return None
+            
             fx = struct.unpack("f", data[6:10])[0]
             fy = struct.unpack('f', data[10:14])[0]
             fz = struct.unpack('f', data[14:18])[0]
@@ -247,7 +254,7 @@ class ForceSensor:
             mz = struct.unpack('f', data[26:30])[0]
             return (fx, fy, fz, mx, my, mz)
         except Exception as e:
-            print(f"Data parsing failed: {e}")
+            self.logger.debug(f"Data parsing failed: {e}, data length: {len(data)}")
             return None
     
     def is_connected(self) -> bool:
@@ -425,13 +432,31 @@ class ForceSensor:
         """
         self.logger.debug("Streaming worker thread started")
         
+        # Set socket timeout to avoid blocking forever
+        if self.socket:
+            self.socket.settimeout(1.0)
+        
+        consecutive_errors = 0
+        max_consecutive_errors = 10
+        
         while self._streaming_active.is_set():
             try:
                 # Receive data packet
-                data = self.socket.recv(1000)
+                data = self.socket.recv(1024)
+                
+                # Check if we received any data
+                if not data:
+                    self.logger.warning("Received empty data packet")
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.logger.error("Too many consecutive errors, stopping stream")
+                        break
+                    continue
+                
                 result = self.parse_data(data)
                 
                 if result is not None:
+                    consecutive_errors = 0  # Reset error counter on success
                     fx, fy, fz, mx, my, mz = result
                     # Create numpy array and apply bias correction
                     force = np.array([fx, fy, fz, mx, my, mz], dtype=np.float32) - self.bias
@@ -441,13 +466,20 @@ class ForceSensor:
                     with self._streaming_lock:
                         self._latest_data = force
                         self._latest_timestamp = timestamp
+                else:
+                    # Parse failed, but don't count as critical error
+                    pass
                 
             except socket.timeout:
+                # Timeout is normal, just continue
                 continue
             except Exception as e:
                 if self._streaming_active.is_set():
                     self.logger.error(f"Error in streaming worker: {e}")
-                break
+                    consecutive_errors += 1
+                    if consecutive_errors >= max_consecutive_errors:
+                        self.logger.error("Too many consecutive errors, stopping stream")
+                        break
         
         self.logger.debug("Streaming worker thread stopped")
     
