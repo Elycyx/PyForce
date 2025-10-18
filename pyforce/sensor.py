@@ -82,6 +82,13 @@ class ForceSensor:
         """
         try:
             self.socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+            
+            # Disable Nagle's algorithm for lower latency
+            self.socket.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
+            
+            # Increase receive buffer size to avoid data accumulation
+            self.socket.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 65536)
+            
             self.socket.connect((self.ip_addr, self.port))
             self.connected = True
             self.logger.info(f"Successfully connected to sensor: {self.ip_addr}:{self.port}")
@@ -427,6 +434,23 @@ class ForceSensor:
             self.logger.warning("Data stream already started")
             return True
         
+        # Clear socket receive buffer to avoid reading stale data
+        if self.socket:
+            old_timeout = self.socket.gettimeout()
+            self.socket.settimeout(0.001)  # Very short timeout
+            try:
+                # Drain any pending data in the socket buffer
+                while True:
+                    data = self.socket.recv(4096)
+                    if not data:
+                        break
+            except socket.timeout:
+                pass  # Expected when buffer is empty
+            except Exception as e:
+                self.logger.debug(f"Error clearing buffer: {e}")
+            finally:
+                self.socket.settimeout(old_timeout)
+        
         # Send command to start streaming
         result = self.send_command("AT+GSD\r\n")
         if result is None:
@@ -455,17 +479,17 @@ class ForceSensor:
         """
         self.logger.info("Streaming worker thread started")
         
-        # Set socket timeout to avoid blocking forever
+        # Set socket timeout to a very low value for minimal latency
         if self.socket:
-            self.socket.settimeout(1.0)
+            self.socket.settimeout(0.01)  # 10ms timeout for fast response
         
         consecutive_errors = 0
         max_consecutive_errors = 10
         
         while self._streaming_active.is_set():
             try:
-                # Receive data packet
-                data = self.socket.recv(1024)
+                # Receive data packet with larger buffer to handle multiple packets
+                data = self.socket.recv(4096)
                 
                 # Update receive counter
                 self._packets_received += 1
@@ -479,6 +503,8 @@ class ForceSensor:
                         break
                     continue
                 
+                # Try to parse the most recent data packet
+                # If buffer contains multiple packets, we want the newest one
                 result = self.parse_data(data)
                 
                 if result is not None:
